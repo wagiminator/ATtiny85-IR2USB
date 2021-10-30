@@ -1,5 +1,5 @@
 // ===================================================================================
-// Project:   IR2USB - IR to USB HID Keyboard Converter Example
+// Project:   IR2USB - NEC Decoder with serial interface
 // Version:   v1.0
 // Year:      2021
 // Author:    Stefan Wagner
@@ -10,8 +10,11 @@
 //
 // Description:
 // ------------
-// ATtiny receives and decodes IR signals (NEC protocol) and sends the associated
-// keystrokes via USB.
+// ATtiny receives and decodes IR signals (NEC protocol) and sends address and command
+// of the signal via USB/Serial to the PC. Use the serial monitor to display the info.
+//
+// Note: After plugging the device into the USB port, it takes a few seconds for the
+//       serial connection to work properly.
 //
 // Wiring:
 // -------
@@ -36,36 +39,15 @@
 // ===================================================================================
 
 // Libraries
-#include "VUSB_Keyboard.h"    // part of USB-AVR core
+#include <VUSB_CDC.h>         // part of USB-AVR core
 
 // Pin definitions
-#define LED_PIN       0       // Pin for LED
-#define IR_PIN        1       // Pin for IR receiver
+#define LED_PIN       0       // pin for LED
+#define IR_PIN        1       // pin for IR receiver
 
-// IR codes
-#define IR_ADDR       0x1A    // IR device address
-#define IR_KEY1       0x01    // IR code for key 1
-#define IR_KEY2       0x02    // IR code for key 2
-#define IR_KEY3       0x03    // IR code for key 3
-#define IR_KEY4       0x04    // IR code for key 4
-#define IR_KEY5       0x05    // IR code for key 5
-#define IR_FAIL       0xFF    // IR fail code
-
-// Keyboard scan codes
-#define KEY_NONE      0x00
-#define KEY_ENTER     0x28
-#define KEY_ESC       0x29
-#define KEY_BACKSPACE 0x2a
-#define KEY_SPACE     0x2c
-#define KEY_PAGEUP    0x4b
-#define KEY_PAGEDOWN  0x4e
-#define KEY_RIGHT     0x4f
-#define KEY_LEFT      0x50
-#define KEY_DOWN      0x51
-#define KEY_UP        0x52
-#define KEY_MUTE      0xe2
-#define KEY_VOLUMEUP  0xe9
-#define KEY_VOLUMEDOWN 0xea
+// Global variables
+uint8_t cmd;                  // received command
+uint16_t addr;                // received address
 
 // ===================================================================================
 // IR Receiver Implementation (NEC Protocol)
@@ -92,9 +74,9 @@ uint8_t IR_readByte(void) {
   uint8_t dur;
   for(uint8_t i=8; i; i--) {                  // 8 bits
     result >>= 1;                             // LSB first
-    if(IR_waitChange(11) < 3) return IR_FAIL; // exit if wrong burst length
+    if(IR_waitChange(11) < 3) return 0;       // exit if wrong burst length
     dur = IR_waitChange(21);                  // measure length of pause
-    if(dur <  3) return IR_FAIL;              // exit if wrong pause length
+    if(dur <  3) return 0;                    // exit if wrong pause length
     if(dur > 11) result |= 0x80;              // bit "0" or "1" depends on pause duration
   }
   return result;                              // return received byte
@@ -102,22 +84,38 @@ uint8_t IR_readByte(void) {
 
 // IR read data according to NEC protocol
 uint8_t IR_read(void) {
-  uint16_t addr;                              // variable for received address
-  if(!IR_available())        return IR_FAIL;  // exit if no signal
-  if(!IR_waitChange(100))    return IR_FAIL;  // exit if wrong start burst length
-  if(IR_waitChange(55) < 35) return IR_FAIL;  // exit if wrong start pause length
+  if(!IR_available())        return 0;        // exit if no signal
+  if(!IR_waitChange(100))    return 0;        // exit if wrong start burst length
+  if(IR_waitChange(55) < 35) return 0;        // exit if wrong start pause length
 
   uint8_t addr1 = IR_readByte();              // get first  address byte
   uint8_t addr2 = IR_readByte();              // get second address byte
   uint8_t cmd1  = IR_readByte();              // get first  command byte
   uint8_t cmd2  = IR_readByte();              // get second command byte
 
-  if(IR_waitChange(11) < 3)  return IR_FAIL;  // exit if wrong final burst length
-  if((cmd1 + cmd2) < 255)    return IR_FAIL;  // exit if command bytes are not inverse
+  if(IR_waitChange(11) < 3)  return 0;        // exit if wrong final burst length
+  if((cmd1 + cmd2) < 255)    return 0;        // exit if command bytes are not inverse
+  cmd = cmd1;                                 // set received command
   if((addr1 + addr2) == 255) addr = addr1;    // check if it's extended NEC-protocol ...
   else addr = ((uint16_t)addr2 << 8) | addr1; // ... and get the correct address
-  if(addr != IR_ADDR)        return IR_FAIL;  // wrong address
-  return cmd1;                                // return command code
+  return 1;                                   // return TRUE
+}
+
+// ===================================================================================
+// Byte to Hex String Conversion
+// ===================================================================================
+
+// Convert nibble into ASCII character
+char ascii(uint8_t nibble) {
+  return((nibble <= 9) ? (nibble + '0') : (nibble + ('A' - 10)));
+}
+
+// Print hex byte via VUSB serial
+void printHex(uint8_t val) {
+  static char *str = "00";
+  str[0] = ascii(val >> 4);                   // high nibble
+  str[1] = ascii(val & 0x0F);                 // low nibble
+  Serial_VUSB.print(str);                     // print hex value
 }
 
 // ===================================================================================
@@ -125,6 +123,7 @@ uint8_t IR_read(void) {
 // ===================================================================================
 
 void setup() {
+  Serial_VUSB.begin();                        // prepare and start V-USB CDC
   DDRB |= (1<<LED_PIN);                       // set LED pin as output
   IR_init();                                  // init IR receiver
 }
@@ -132,15 +131,16 @@ void setup() {
 void loop() {
   if(IR_available()) {                        // IR signal coming in?
     PORTB |= (1<<LED_PIN);                    // switch on indicator LED
-    uint8_t command = IR_read();              // get received command
-    switch(command) {                         // send key according to command
-      case IR_KEY1:   VUSB_Keyboard.sendKeyStroke(KEY_SPACE);     break;
-      case IR_KEY2:   VUSB_Keyboard.sendKeyStroke(KEY_BACKSPACE); break;
-      case IR_KEY3:   VUSB_Keyboard.sendKeyStroke(KEY_PAGEUP);    break;
-      case IR_KEY4:   VUSB_Keyboard.sendKeyStroke(KEY_PAGEDOWN);  break;
-      case IR_KEY5:   VUSB_Keyboard.sendKeyStroke(KEY_A);         break;
-      default:        break;
+    if(IR_read()) {                           // received a valid signal?
+      // Print address and command via serial
+      Serial_VUSB.println(F("NEC telegram received:"));
+      Serial_VUSB.print(F("Address: 0x"));
+      if(addr > 255) printHex(addr >> 8);
+      printHex(addr); Serial_VUSB.println();
+      Serial_VUSB.print(F("Command: 0x"));
+      printHex(cmd); Serial_VUSB.println();
     }
     PORTB &= ~(1<<LED_PIN);                   // switch off indicator LED
   }
+  Serial_VUSB.refresh();                      // to keep the USB connection alive
 }

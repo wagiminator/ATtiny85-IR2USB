@@ -34,7 +34,7 @@ Since there is no ICSP header on the board, you have to program the ATtiny eithe
 3. [V-USB](https://www.obdev.at/products/vusb/index.html)
 4. [TinyRemote](https://github.com/wagiminator/ATtiny13-TinyRemote)
 
-![pic2.jpg](https://raw.githubusercontent.com/wagiminator/ATtiny85-IR2USB/main/documentation/IR2USB_pic2.jpg)
+![pic3.jpg](https://raw.githubusercontent.com/wagiminator/ATtiny85-IR2USB/main/documentation/IR2USB_pic3.jpg)
 
 # License
 ![license.png](https://i.creativecommons.org/l/by-sa/3.0/88x31.png)
